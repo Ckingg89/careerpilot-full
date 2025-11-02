@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 import numpy as np
 import math
 from job_search.api_clients.jsearch_api import fetch_jsearch
-from utils.salary_extractor import extract_salary_for_job, parse_salary_range
-from utils.date_extractor import extract_posted_date
+from job_search.utils.salary_extractor import extract_salary_for_job, parse_salary_range
+from job_search.utils.date_extractor import extract_posted_date
 
 load_dotenv()
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
