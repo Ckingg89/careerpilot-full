@@ -1,42 +1,58 @@
-# file: candidate_survey.py
+# file: backend/personality_fit/candidate_survey.py
+"""
+Generates HEXACOG personality + environment preference scores
+for a given candidate.
+
+This version is production-ready:
+- No blocking input()
+- Works as a callable function in FastAPI
+- Still supports optional local testing
+"""
+
 import json
 import numpy as np
+from pathlib import Path
 
-def ask_likert(prompt: str) -> int:
-    while True:
-        try:
-            v = int(input(f"{prompt}  (1–5): "))
-            if 1 <= v <= 5:
-                return v
-        except ValueError:
-            pass
-        print("Please enter a whole number between 1 and 5.")
+# ======= NORMALIZATION UTILITIES =======
 
-def normalize_likert(v: int) -> float:
-    return (v - 1) / 4.0
+def normalize_likert(value: int, reverse: bool = False) -> float:
+    """
+    Convert a 1–5 Likert response into a normalized 0–1 score.
+    Automatically reverses if reverse=True.
+    """
+    v = max(1, min(5, int(value)))  # clamp within 1–5
+    q = (v - 1) / 4.0
+    return 1.0 - q if reverse else q
 
-def score_trait(items):
-    vals = []
-    for text, is_rev in items:
-        v = ask_likert(text)
-        q = normalize_likert(v)
-        if is_rev:
-            q = 1.0 - q
-        vals.append(q)
-    return 100.0 * float(np.mean(vals))
 
-def score_env(items):
-    vals = []
-    for text, is_rev in items:
-        v = ask_likert(text)
-        q = normalize_likert(v)
-        if is_rev:
-            q = 1.0 - q
-        vals.append(q)
-    return float(np.mean(vals))
+def score_trait(responses: list[int], reverse_flags: list[bool]) -> float:
+    """
+    Compute trait score (0–100) given lists of responses and reverse flags.
+    """
+    vals = [
+        normalize_likert(v, rev)
+        for v, rev in zip(responses, reverse_flags)
+        if isinstance(v, (int, float))
+    ]
+    return round(100.0 * float(np.mean(vals)), 2) if vals else 50.0
+
+
+def score_env(responses: list[int], reverse_flags: list[bool]) -> float:
+    """
+    Compute environment preference score (0–1 scale).
+    """
+    vals = [
+        normalize_likert(v, rev)
+        for v, rev in zip(responses, reverse_flags)
+        if isinstance(v, (int, float))
+    ]
+    return round(float(np.mean(vals)), 3) if vals else 0.5
+
 
 # ======= SURVEY BANKS =======
 
+# Each trait/environment now only defines the prompts and reverse flags.
+# The actual user responses will come from the front end or API.
 CANDIDATE_TRAITS = {
     "H": [
         ("I would return extra change a cashier gave me by mistake.", False),
@@ -146,15 +162,39 @@ CANDIDATE_ENV = {
     ],
 }
 
-print("\n=== CANDIDATE SURVEY: HEXACOG + ENV PREFERENCES ===")
+# ======= MAIN FUNCTION =======
 
-user_traits = {t: round(score_trait(items), 2) for t, items in CANDIDATE_TRAITS.items()}
-user_env = {dim: round(score_env(items), 3) for dim, items in CANDIDATE_ENV.items()}
+def generate_candidate_profile(responses: dict[str, list[int]]) -> dict:
+    """
+    Takes a dict of responses (same structure as CANDIDATE_TRAITS & ENV)
+    and returns computed scores for traits and environment.
+    """
+    traits_scores = {}
+    env_scores = {}
 
-output = {"traits": user_traits, "environment": user_env}
-print("\n✅ Candidate survey complete.\n")
-print(json.dumps(output, indent=2))
+    for trait, questions in CANDIDATE_TRAITS.items():
+        prompts, reverses = zip(*questions)
+        vals = responses.get(trait, [3] * len(prompts))
+        traits_scores[trait] = score_trait(vals, reverses)
 
-with open("candidate_scores.json", "w") as f:
-    json.dump(output, f, indent=2)
-print("\n✅ Saved as candidate_scores.json\n")
+    for dim, questions in CANDIDATE_ENV.items():
+        prompts, reverses = zip(*questions)
+        vals = responses.get(dim, [3] * len(prompts))
+        env_scores[dim] = score_env(vals, reverses)
+
+    return {"traits": traits_scores, "environment": env_scores}
+
+
+def save_profile(profile: dict, path: str = "candidate_scores.json"):
+    """Persist candidate profile locally (for debugging)."""
+    Path(path).write_text(json.dumps(profile, indent=2), encoding="utf-8")
+
+
+# ======= LOCAL TESTING =======
+if __name__ == "__main__":
+    print("⚙️  Generating sample neutral profile (all 3/5 answers)...")
+    sample_responses = {k: [3] * len(v) for k, v in {**CANDIDATE_TRAITS, **CANDIDATE_ENV}.items()}
+    profile = generate_candidate_profile(sample_responses)
+    save_profile(profile)
+    print(json.dumps(profile, indent=2))
+    print("\n✅ Saved as candidate_scores.json\n")

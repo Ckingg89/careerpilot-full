@@ -1,34 +1,62 @@
+# file: backend/resume_parser/parser.py
+"""
+Production-ready Resume Parser module for CareerPilot.
+- Accepts raw PDF bytes or file path.
+- Extracts text with pdfplumber.
+- Parses with GPT-4o-mini for structured JSON output.
+"""
+
 import os
+import io
 import json
 import pdfplumber
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# ---------- Load API key ----------
+# ---------- SETUP ----------
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ---------- PDF to Text ----------
-def pdf_to_text(pdf_path: str) -> str:
-    """Extract text from all pages of a PDF file."""
+# ---------- PDF TO TEXT ----------
+def pdf_to_text(pdf_input) -> str:
+    """
+    Extract text from PDF bytes or a file path.
+    Works both in API (UploadFile) and local script usage.
+    """
     text = ""
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
+    try:
+        if isinstance(pdf_input, (bytes, bytearray)):
+            with pdfplumber.open(io.BytesIO(pdf_input)) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+        elif isinstance(pdf_input, str) and os.path.exists(pdf_input):
+            with pdfplumber.open(pdf_input) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+        else:
+            raise ValueError("Invalid PDF input type. Must be bytes or valid file path.")
+    except Exception as e:
+        print(f"⚠️ Error reading PDF: {e}")
+        return ""
     return text.strip()
 
-# ---------- GPT-4o Mini Resume Parser ----------
+# ---------- GPT-4o MINI RESUME PARSER ----------
 def parse_resume_with_gpt(resume_text: str) -> dict:
     """
-    Send resume text to GPT-4o mini for structured parsing.
+    Send resume text to GPT-4o-mini for structured parsing.
     Returns a dictionary with personal info, work experience, education, and skills.
     """
-    prompt = f"""
-    You are an expert resume parser. Read the following resume text and extract the requested information.
+    if not resume_text:
+        return {"error": "Empty resume text — nothing to parse."}
 
-    Respond ONLY in JSON using this exact structure:
+    prompt = f"""
+    You are an expert resume parser. Read the following resume text and extract information in JSON form.
+
+    Respond ONLY in this exact structure:
     {{
       "name": "",
       "phone_number": "",
@@ -56,60 +84,48 @@ def parse_resume_with_gpt(resume_text: str) -> dict:
 
     Parsing rules:
     - Be concise and accurate.
-    - In work_experience:
-        * If the job is marked "present", "current", or similar, set date_ended to "Present".
-        * Otherwise, extract the actual end date.
-    - In education:
-        * If the text indicates the user is still studying (e.g., "candidate", "expected", "pursuing", "in progress"),
-          append " (in progress)" to the degree title.
-        * Example: "Bachelor of Science (B.S.) in Computer Science (in progress)".
-    - For skills:
-        * Include explicit skills listed.
-        * ALSO infer strongly implied skills from all parts of the resume (job descriptions, achievements, education, summary, etc.).
-        * Only include a skill if the text gives clear evidence of it (e.g., if they mention “developed machine learning models”, include “Machine Learning”).
-        * Do NOT stretch or guess. Only infer if the evidence is explicit or unavoidable.
-        * Exclude soft skills like “ethics”, “responsibility”, etc. unless explicitly relevant to the work.
-    - Use "Present" or "Ongoing" where appropriate.
-    - Use a dash "-" if information is unavailable.
+    - Use "Present" if ongoing.
+    - Append "(in progress)" to degrees still being pursued.
+    - Include explicit and clearly implied technical skills only.
+    - Use "-" if information is unavailable.
 
     Resume text:
     '''{resume_text}'''
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a precise, structured resume parser."},
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"}
-    )
-
-    # Safely parse JSON string
     try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a precise, structured resume parser."},
+                {"role": "user", "content": prompt.strip()},
+            ],
+            response_format={"type": "json_object"},
+        )
+
         message_content = response.choices[0].message.content
         parsed_data = json.loads(message_content)
+        return parsed_data
+
+    except json.JSONDecodeError as e:
+        print("⚠️ JSON parse error:", e)
+        return {"error": "Failed to parse model output.", "raw_response": message_content}
     except Exception as e:
-        print("⚠️ Error parsing JSON from model:", e)
-        parsed_data = {"error": "Failed to parse JSON", "raw_response": response.choices[0].message.content}
+        print("⚠️ GPT request error:", e)
+        return {"error": str(e)}
 
-    return parsed_data
-
-# ---------- Main ----------
-def main():
+# ---------- MAIN (OPTIONAL LOCAL TEST) ----------
+if __name__ == "__main__":
     pdf_path = input("Enter the path to the resume PDF: ").strip()
-
-    # Step 1: Extract text
     print("\nExtracting text from PDF...")
     resume_text = pdf_to_text(pdf_path)
 
-    # Step 2: Parse with GPT-4o mini
-    print("Sending to GPT-4o mini for parsing...\n")
+    if not resume_text:
+        print("❌ No text extracted. Exiting.")
+        exit()
+
+    print("Sending to GPT-4o-mini for parsing...\n")
     parsed_resume = parse_resume_with_gpt(resume_text)
 
-    # Step 3: Display structured data
     print("\n---- Parsed Resume Data ----")
     print(json.dumps(parsed_resume, indent=2, ensure_ascii=False))
-
-if __name__ == "__main__":
-    main()

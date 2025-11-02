@@ -1,5 +1,7 @@
-from fastapi import FastAPI, UploadFile, Form
+# file: backend/main.py
+from fastapi import FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import json
 
 from resume_parser.parser import parse_resume_with_gpt, pdf_to_text
@@ -8,10 +10,9 @@ from personality_fit.job_fit_analysis import calculate_fit_scores
 
 app = FastAPI(title="CareerPilot API", version="1.0")
 
-# Allow connections from your Base44 frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with your Base44 domain for production
+    allow_origins=["*"],  # TODO: Restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -21,7 +22,10 @@ app.add_middleware(
 def root():
     return {"message": "CareerPilot backend running successfully!"}
 
-# ----------- RESUME PARSER -----------
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
 @app.post("/parse_resume")
 async def parse_resume(file: UploadFile):
     pdf_bytes = await file.read()
@@ -29,15 +33,21 @@ async def parse_resume(file: UploadFile):
     parsed_data = parse_resume_with_gpt(text)
     return parsed_data
 
-# ----------- JOB SEARCH -----------
 @app.get("/get_jobs")
 def get_jobs(keyword: str, location: str, job_type: str = "", country: str = "us", date_posted: str = "all"):
     jobs = job_search_pipeline(keyword, location, job_type, country, date_posted)
     return {"results": jobs}
 
-# ----------- PERSONALITY FIT -----------
+class FitRequest(BaseModel):
+    candidate: dict
+    job_descriptions: list[str]
+
 @app.post("/fit_score")
-async def fit_score(candidate_json: str = Form(...), job_description: str = Form(...)):
-    candidate_data = json.loads(candidate_json)
-    scores = calculate_fit_scores(candidate_data, job_description)
-    return scores
+async def fit_score(request: FitRequest):
+    scores = calculate_fit_scores(request.candidate, request.job_descriptions)
+    return {"results": scores}
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    print(f"❌ Unexpected error: {exc}")
+    return {"error": str(exc)}

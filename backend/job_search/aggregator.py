@@ -4,18 +4,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import numpy as np
 import math
-from job_search.api_clients.jsearch_api import fetch_jsearch
-from job_search.utils.salary_extractor import extract_salary_for_job, parse_salary_range
-from job_search.utils.date_extractor import extract_posted_date
+
+# ✅ Use relative imports — fixes Render path issues
+from ..api_clients.jsearch_api import fetch_jsearch
+from .utils.salary_extractor import extract_salary_for_job, parse_salary_range
+from .utils.date_extractor import extract_posted_date
 
 load_dotenv()
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+
 
 # ========================= UTILITIES =========================
 def normalize_missing(val):
     if val is None or (isinstance(val, str) and val.strip().lower() in {"", "n/a", "none", "null"}):
         return None
     return val
+
 
 def is_missing_salary(val):
     if val is None:
@@ -32,6 +36,7 @@ def is_missing_salary(val):
     if isinstance(val, (int, float)):
         return val <= 0
     return True
+
 
 def within_date_filter(job_date_str, user_filter):
     if not job_date_str:
@@ -52,6 +57,7 @@ def within_date_filter(job_date_str, user_filter):
         return delta_days <= 30
     return True  # "all"
 
+
 def matches_job_type(job_type_field, user_job_type):
     if not user_job_type:
         return True
@@ -60,6 +66,7 @@ def matches_job_type(job_type_field, user_job_type):
     job_type_field = job_type_field.lower()
     user_job_type = user_job_type.lower()
     return user_job_type in job_type_field
+
 
 # ========================= PAY SCORE LOGIC =========================
 def compute_fallback_pay_score(job):
@@ -73,6 +80,7 @@ def compute_fallback_pay_score(job):
     MIN, MAX = 15000, 300000
     avg = max(min(avg, MAX), MIN)
     return round(1 + 9 * (np.log(avg) - np.log(MIN)) / (np.log(MAX) - np.log(MIN)), 1)
+
 
 def compute_relative_pay_scores(jobs):
     """Compute relative pay scores (1–10) based on salaries among valid results."""
@@ -107,6 +115,7 @@ def compute_relative_pay_scores(jobs):
         job["pay_score"] = round(1 + 9 * sigmoid, 1)
     return jobs
 
+
 # ========================= JOB PROCESSING =========================
 def process_job(job):
     job["job_min_salary"] = normalize_missing(job.get("job_min_salary"))
@@ -128,6 +137,7 @@ def process_job(job):
 
     return job
 
+
 def print_job(job):
     description = job.get("job_description", "N/A") or "N/A"
 
@@ -145,6 +155,7 @@ def print_job(job):
     print(description.strip())
     print("\n─────────────────────────────\n")
 
+
 # ========================= MAIN =========================
 def main():
     print("=== Job Search Filters ===")
@@ -159,7 +170,7 @@ def main():
     jobs = data.get("data", [])
     print(f"✅ Retrieved {len(jobs)} job listings\n")
 
-    # Process jobs (salary/date extraction)
+    # Process jobs concurrently
     updated = []
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(process_job, job) for job in jobs]
@@ -185,22 +196,20 @@ def main():
         avg = np.mean(vals)
         if avg < 1000:  # hourly
             if job.get("job_country", "").lower() == "ca" and avg < 17.20:
-                continue  # drop below-min-wage jobs
+                continue
         cleaned.append(job)
 
     print(f"✅ {len(cleaned)}/{len(updated)} jobs remain after filtering.\n")
 
     # Compute pay scores relative to remaining jobs
     cleaned = compute_relative_pay_scores(cleaned)
-
-    # Sort by pay score (highest first)
     cleaned.sort(key=lambda j: (j.get("pay_score") or 0), reverse=True)
 
-    # Display
     for job in cleaned:
         print_job(job)
 
     print("✅ Done — results ranked by relative pay score!\n")
+
 
 def job_search_pipeline(keyword, location, job_type=None, country="us", date_posted="all"):
     """
@@ -236,7 +245,6 @@ def job_search_pipeline(keyword, location, job_type=None, country="us", date_pos
 
     cleaned = compute_relative_pay_scores(cleaned)
     cleaned.sort(key=lambda j: (j.get("pay_score") or 0), reverse=True)
-
     return cleaned
 
 
