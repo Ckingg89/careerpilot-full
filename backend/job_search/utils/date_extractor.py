@@ -2,7 +2,7 @@ import re
 from datetime import datetime, timedelta, timezone
 import requests
 from bs4 import BeautifulSoup
-from utils.page_fetcher import get_rendered_html
+from job_search.utils.page_fetcher import get_rendered_html
 
 BLOCKED_SITES = {"indeed.com", "ca.indeed.com", "simplyhired.ca", "glassdoor.com", "ziprecruiter.com"}
 
