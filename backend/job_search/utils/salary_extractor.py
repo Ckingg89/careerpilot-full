@@ -2,7 +2,8 @@ import re
 import requests
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
-from utils.page_fetcher import get_rendered_html
+from job_search.utils.page_fetcher import get_rendered_html
+
 
 # Domains that almost always need a real browser
 BLOCKED_DOMAINS = {
