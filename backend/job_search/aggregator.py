@@ -202,5 +202,43 @@ def main():
 
     print("✅ Done — results ranked by relative pay score!\n")
 
+def job_search_pipeline(keyword, location, job_type=None, country="us", date_posted="all"):
+    """
+    Programmatic version of the job search for API or backend usage.
+    Returns a list of processed job dicts.
+    """
+    data = fetch_jsearch(keyword, location, job_type, country, date_posted)
+    jobs = data.get("data", [])
+    updated = []
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(process_job, job) for job in jobs]
+        for f in as_completed(futures):
+            updated.append(f.result())
+
+    filtered = [
+        job for job in updated
+        if matches_job_type(job.get("job_employment_type"), job_type)
+        and within_date_filter(job.get("job_posted_at_datetime_utc"), date_posted)
+    ]
+
+    cleaned = []
+    for job in filtered:
+        vals = [v for v in [job.get("job_min_salary"), job.get("job_max_salary")] if v]
+        if not vals:
+            cleaned.append(job)
+            continue
+        avg = np.mean(vals)
+        if avg < 1000:  # hourly
+            if job.get("job_country", "").lower() == "ca" and avg < 17.20:
+                continue
+        cleaned.append(job)
+
+    cleaned = compute_relative_pay_scores(cleaned)
+    cleaned.sort(key=lambda j: (j.get("pay_score") or 0), reverse=True)
+
+    return cleaned
+
+
 if __name__ == "__main__":
     main()
