@@ -4,7 +4,7 @@ import json
 
 from resume_parser.parser import parse_resume_with_gpt, pdf_to_text
 from job_search.aggregator import job_search_pipeline
-from personality_fit.fit_analysis import calculate_fit_scores
+from personality_fit.job_fit_analysis import calculate_fit_scores
 
 app = FastAPI(title="CareerPilot API", version="1.0")
 
