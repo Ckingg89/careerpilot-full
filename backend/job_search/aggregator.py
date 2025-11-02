@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import numpy as np
 import math
 
-# ✅ FIXED: Use absolute imports (Render-safe)
+# ✅ FIXED: absolute imports (Render-safe)
 from job_search.api_clients.jsearch_api import fetch_jsearch
 from job_search.utils.salary_extractor import extract_salary_for_job, parse_salary_range
 from job_search.utils.date_extractor import extract_posted_date
