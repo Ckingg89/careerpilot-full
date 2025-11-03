@@ -1,131 +1,71 @@
-# file: backend/resume_parser/parser.py
 """
-Production-ready Resume Parser module for CareerPilot.
-- Accepts raw PDF bytes or file path.
-- Extracts text with pdfplumber.
-- Parses with GPT-4o-mini for structured JSON output.
+Resume Parser Module
+--------------------
+This module extracts and normalizes key information from uploaded resumes (PDF/DOCX/TXT).
+It supports use inside FastAPI routes and can be extended with machine-learning matching later.
 """
 
-import os
-import io
+import re
 import json
-import pdfplumber
-from openai import OpenAI
-from dotenv import load_dotenv
+from typing import Dict, Optional
+from pathlib import Path
+from docx import Document
+from pdfminer.high_level import extract_text
 
-# ---------- SETUP ----------
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ---------- PDF TO TEXT ----------
-def pdf_to_text(pdf_input) -> str:
-    """
-    Extract text from PDF bytes or a file path.
-    Works both in API (UploadFile) and local script usage.
-    """
-    text = ""
-    try:
-        if isinstance(pdf_input, (bytes, bytearray)):
-            with pdfplumber.open(io.BytesIO(pdf_input)) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-        elif isinstance(pdf_input, str) and os.path.exists(pdf_input):
-            with pdfplumber.open(pdf_input) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-        else:
-            raise ValueError("Invalid PDF input type. Must be bytes or valid file path.")
-    except Exception as e:
-        print(f"⚠️ Error reading PDF: {e}")
-        return ""
+# =============== UTILITIES ===============
+
+def read_file_text(file_path: str) -> str:
+    """Extract raw text from a PDF, DOCX, or TXT file."""
+    path = Path(file_path)
+    if path.suffix.lower() == ".pdf":
+        return extract_text(path)
+    elif path.suffix.lower() == ".docx":
+        doc = Document(path)
+        return "\n".join(p.text for p in doc.paragraphs)
+    elif path.suffix.lower() == ".txt":
+        return path.read_text(encoding="utf-8")
+    else:
+        raise ValueError("Unsupported file type. Please upload PDF, DOCX, or TXT.")
+
+
+def clean_text(text: str) -> str:
+    """Normalize text spacing and remove strange characters."""
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\x00-\x7F]+", " ", text)
     return text.strip()
 
-# ---------- GPT-4o MINI RESUME PARSER ----------
-def parse_resume_with_gpt(resume_text: str) -> dict:
-    """
-    Send resume text to GPT-4o-mini for structured parsing.
-    Returns a dictionary with personal info, work experience, education, and skills.
-    """
-    if not resume_text:
-        return {"error": "Empty resume text — nothing to parse."}
 
-    prompt = f"""
-    You are an expert resume parser. Read the following resume text and extract information in JSON form.
+# =============== PARSER CORE ===============
 
-    Respond ONLY in this exact structure:
-    {{
-      "name": "",
-      "phone_number": "",
-      "email": "",
-      "address": "",
-      "work_experience": [
-        {{
-          "position_name": "",
-          "company_name": "",
-          "location": "",
-          "date_started": "",
-          "date_ended": "",
-          "description": ""
-        }}
-      ],
-      "education": [
-        {{
-          "education_level": "",
-          "institution": "",
-          "date_of_graduation": ""
-        }}
-      ],
-      "skills": []
-    }}
+def parse_resume(file_path: str) -> Dict[str, Optional[str]]:
+    """Extract key information from a resume."""
+    raw_text = clean_text(read_file_text(file_path))
 
-    Parsing rules:
-    - Be concise and accurate.
-    - Use "Present" if ongoing.
-    - Append "(in progress)" to degrees still being pursued.
-    - Include explicit and clearly implied technical skills only.
-    - Use "-" if information is unavailable.
+    # Example regex patterns (simple baseline)
+    email = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", raw_text)
+    phone = re.search(r"\+?\d[\d\s\-]{7,}\d", raw_text)
+    name = raw_text.split("\n")[0].strip() if raw_text else None
 
-    Resume text:
-    '''{resume_text}'''
-    """
+    # Find key skills
+    skills_keywords = [
+        "Python", "Java", "C++", "Machine Learning", "Excel", "Communication",
+        "Leadership", "SQL", "Data Analysis", "FastAPI", "Django", "React"
+    ]
+    found_skills = [s for s in skills_keywords if s.lower() in raw_text.lower()]
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a precise, structured resume parser."},
-                {"role": "user", "content": prompt.strip()},
-            ],
-            response_format={"type": "json_object"},
-        )
+    return {
+        "name": name,
+        "email": email.group(0) if email else None,
+        "phone": phone.group(0) if phone else None,
+        "skills": found_skills or None,
+        "summary_length": len(raw_text.split()),
+    }
 
-        message_content = response.choices[0].message.content
-        parsed_data = json.loads(message_content)
-        return parsed_data
 
-    except json.JSONDecodeError as e:
-        print("⚠️ JSON parse error:", e)
-        return {"error": "Failed to parse model output.", "raw_response": message_content}
-    except Exception as e:
-        print("⚠️ GPT request error:", e)
-        return {"error": str(e)}
+# =============== TEST ENTRY POINT ===============
 
-# ---------- MAIN (OPTIONAL LOCAL TEST) ----------
 if __name__ == "__main__":
-    pdf_path = input("Enter the path to the resume PDF: ").strip()
-    print("\nExtracting text from PDF...")
-    resume_text = pdf_to_text(pdf_path)
-
-    if not resume_text:
-        print("❌ No text extracted. Exiting.")
-        exit()
-
-    print("Sending to GPT-4o-mini for parsing...\n")
-    parsed_resume = parse_resume_with_gpt(resume_text)
-
-    print("\n---- Parsed Resume Data ----")
-    print(json.dumps(parsed_resume, indent=2, ensure_ascii=False))
+    sample_path = "sample_resume.pdf"  # change this to test locally
+    result = parse_resume(sample_path)
+    print(json.dumps(result, indent=2))
